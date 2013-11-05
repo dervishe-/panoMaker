@@ -129,7 +129,7 @@ function check_tools() { #{{{
 	fi
 	check_item $CROPPER 'CROPPER'
 	check_item $INFO 'INFO'
-	check_item $OPTIMIZER 'OPTIMIZER'
+	if [ $FLAG_OPTIM = true ]; then check_item $OPTIMIZER 'OPTIMIZER'; fi
 	check_item $FACTORIZER 'FACTORIZER'
 	check_item $ID_GENERATOR 'ID_GENERATOR'
 	check_item $CONVERTER 'CONVERTER'
