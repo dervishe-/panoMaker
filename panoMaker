@@ -1,0 +1,418 @@
+#!/bin/bash
+#
+#	vim: 		foldmarker{{{,}}} 
+#	Author:		Alex Keledjian <dervishe@yahoo.fr>
+#	License:	GPLv3
+#	(C):		AFPD
+#	Version:	0.1
+#	Todo:		- Remplacer les "eval" par une solution plus stable mais concise
+#				- Améliorer le parsing des arguments (notamment les options longues avec arguments)
+#				- Vérification de la pré-existence de fichiers de travail afin de ne pas les refaire
+#
+#{{{Variables
+VERSION="0.1"
+WORK_DIR=./work
+MANIFEST=Manifest
+TEMPLATE_IMAGE=images.tpl
+OUTPUT_FILE=../pano.svg
+MAP_FILES=carte_
+CROPPER=convert
+INFO=identify
+OPTIMIZER=optipng
+FACTORIZER=factor
+ID_GENERATOR=md5sum
+CONVERTER=openssl
+WIDTH_CANVAS=0
+HEIGHT_CANVAS=0
+WIDTH_IMAGE=0
+HEIGHT_IMAGE=0
+VERBOSE=true
+FLAG_OPTIM=false
+KEEP=false
+USE_OLD=false
+ID=false
+#Liste des commandes: Pour aller plus vite: <PageUp>, ralentir: <PageDown>, déplacements: <touches de direction>, entrée mode automatique: <home>, sortie mode auto: <end>, zoomer: <F1>, dézoomer: <F2>  
+COMMANDES="{ down:40, up:38, right:37, left:39, faster:33, slower:34, auto_on:36, auto_off:35, zoom_in:112, zoom_out:113 }"
+#}}}
+#{{{Librairie
+function test_image() { #{{{
+	if [ $# -eq 0 ]; then
+		invoke && exit 1
+	fi
+	if ! [ -f ${!#} ]; then 
+		echo "${!#} ne semble pas etre un fichier existant..."
+		invoke && exit 1; 
+	else
+		FICHIER=${!#}
+	fi
+} 
+#}}}
+function invoke() {	#{{{
+	echo -e "Usage: $0 [options] fichier_image_panorama\n$0 --help pour acceder a l'aide"
+}
+#}}}
+function version() {	#{{{
+	echo -e "$0 version: $VERSION\nAuteur: A. Keledjian <dervishe@yahoo.fr>\nLicense: GPLv3"
+}
+#}}}
+function help() {	#{{{
+	invoke
+	echo "Ce programme permet de fabriquer des panoptissons à partir d'une photo en mode panorama.
+Liste des options:
+	Fixation des chemins pour les utilitaires:
+		-c )  	$CROPPER (Découpeur d'images générant les fichiers images utilisées)
+		-o )  	$OPTIMIZER (Optimiseur d'images aidant à les rendre plus légères)
+		-b )  	$CONVERTER (Permet d'encoder les images en base64)
+		-f )  	$FACTORIZER (Programme permettant de décomposer des nombres en produit de facteurs premiers)
+		-i )  	$INFO (Détermination du type de fichier fournit)
+		-g )  	$ID_GENERATOR (Générateur de signatures)
+	Fixation des différentes valeurs (tailles et identifiants):
+		-h )  	id de l'image. Ceci permet d'intégrer l'image SVG directement dans un document HTML. S'il n'est pas fixé, la valeur par défaut est le hash md5 du fichier original
+		-w ) 	largeur de l'affichage des images decoupées (Valeur par défaut: La largeur d'une sous image /2)
+		-x ) 	hauteur de l'affichage des images decoupées (Valeur par défaut: La hauteur de votre image / 2)
+		-y ) 	largeur du panoptisson (Valeur par défaut: identique a la largeur d'une sous-image)
+		-z ) 	hauteur du panoptisson (Valeur par défaut: identique a la largeur d'une sous-image)
+	Options longues:
+		--quiet )		Mode silencieux, n'affiche aucune information, quand le programme s'arrête il vous rend la main	
+		--help )		Affiche cette aide
+		--keep-working-files )	Garde les fichiers intermédiaires de travail
+		--use-working-files )	Utilise les fichiers intermédiaires de travail préalablement sauvegardés (utile si l'on utilise l'optimisation par expl)
+		--optimise-images )	Optimise les images PNG générées lors de la découpe du panorama (cette option peut allonger grandement la durée du travail selon la taille des images)
+		--version )		Affiche les options de version du programme
+
+Usages:
+	Pour faire votre panoptisson, la démarche est simple, vous construisez un panorama avec hugin par exemple ou en vous servant la fonction idione de votre smartphone et vous la passez en argument à ce script:
+$0 mon_fichier_pano.jpg (par exemple)
+
+	Maintenant, vous pouvez décider de fixer vous-même la taille des images pour l'affichage (pour rendre accessible par expl le zoom sans trop perdre en qualité). Par exemple, j'ai une image totale (le panorama dont la taille est: 22016x1600) et je voudrais qu'elles apparaissent sous la forme d'un panoptisson dont la taille est: 800x600:
+$0 -w 800 -x 600 mon_fichier_pano.jpg
+
+	Pour intégrrer le panoptisson directement dans une page html, le meixu est de faire ainsi:
+$0 -h id_image mon_fichier_pano.jpg
+
+Puis d'utiliser le code de balise suivant:
+<embed src=\"pano.svg\" type=\"image/svg+xml\" width=\"800\" height=\"600\" id=\"id_image\" />
+Bien évidemment ceci est compatible avec les autres options. Quand aux valeurs de width et de height, vous pouvez fixer ce que vous voulez
+
+Les commandes du panoptisson généré:
+	<F1>				Zoomer
+	<F2>				Dézoomer
+	<PagePrécédente>		Accélérer le défilement
+	<PageSuivante>			Ralentir le défillement
+	<Début>				Commencer le défilement automatique
+	<Fin>				Arrêter le défilement automatique
+	<FlèchesDirection>		Se déplacer au sein du panoptisson
+
+Pour info, ces commandes sont définies au sein du script $0 dans la variable: COMMANDES. Vous pouvez donc les modifier.
+"
+}
+#}}}
+function check_item() { #{{{
+	if [ $VERBOSE = true ]; then echo -n "[*] Recherche de '$1':"; fi
+	for NUTIL in $(whereis -b $1 | sed 's/^[^:]*: //'); do
+		if [ -x "$NUTIL" ]; then 
+			eval "$2=$NUTIL"
+			if [ $VERBOSE = true ]; then echo " [OK]"; fi
+			return 0
+		else
+			if [ $VERBOSE = true ]; then echo " [FAIL]"; fi
+			echo "$1 n'a pas été trouvé."
+			if [ $VERBOSE = true ]; then echo "==============================================="; fi
+		fi
+	done
+	exit -1
+} #}}}
+function check_tools() { #{{{
+	if [ $VERBOSE = true ]; then 
+		echo -e "\nVérification de la présence des outils:"
+		echo "==============================================="
+	fi
+	check_item $CROPPER 'CROPPER'
+	check_item $INFO 'INFO'
+	check_item $OPTIMIZER 'OPTIMIZER'
+	check_item $FACTORIZER 'FACTORIZER'
+	check_item $ID_GENERATOR 'ID_GENERATOR'
+	check_item $CONVERTER 'CONVERTER'
+	if [ $VERBOSE = true ]; then echo "==============================================="; fi
+} #}}}
+function check_type() {	#{{{
+	TYPE=$($INFO $1 | awk '{ print $2 }' | grep "PNG\|JPE\?G" | wc -l)
+	if ! [ $TYPE -eq 1 ]; then 
+		echo "Erreur: $1 n'est pas une image de type jpeg ou png."
+		exit 1
+	fi
+}
+#}}}
+function setup_env() {	#{{{
+	if ! [ -d $WORK_DIR ]; then mkdir $WORK_DIR; fi
+	cp $FICHIER $WORK_DIR/.
+	FIC=$(basename $FICHIER)
+	cd $WORK_DIR
+	touch ./$TEMPLATE_IMAGE
+}
+#}}}
+function det_width() { #{{{
+	if [ $# -gt 2 ]; then # Cas où l'on a plus de 3 facteurs premiers
+		RESULTAT=1;
+		for FACT in $*; do
+			if [ $FACT -ge 10 ]; then
+				echo $(($WIDTH / $FACT))
+				return 0
+			else
+				RESULTAT=$(($RESULTAT * $FACT))
+				if [ $RESULTAT -ge 10 ]; then
+					echo $(($WIDTH / $RESULTAT))
+					return 0
+				fi
+			fi	
+		done
+	elif [ $# -eq 1 ]; then # La dimension est un nombre premier: On retire un pixel et on divise par 2 
+		$CROPPER $FIC -crop $(($WIDTH - 1))x${HEIGHT}+0+0 ./fictmp
+		mv ./fictmp $FIC
+		echo $(( ($WIDTH - 1) / 2 ))
+	else	# Cas où l'on a deux facteurs premiers
+		if [ $2 -gt $1 ]; then
+			echo $2
+		else
+			echo $1
+		fi
+	fi
+}
+#}}}
+function make_template_image() {	#{{{
+	echo "<image width=\"$WIDTH_IMAGE\" height=\"$HEIGHT_IMAGE\" id=\"$1\" xlink:href=\"data:image/${EXT};base64,$($CONVERTER enc -base64 -in $1)\" />"
+}
+#}}}
+function prepare_images() {	#{{{
+	$ID_GENERATOR $1 > $MANIFEST
+	if [ $ID = false ]; then ID=$(cat $MANIFEST | awk '{ print $1 }'); fi
+	TYPE=$($INFO $1 | awk '{ print $3 }')
+	if [ $TYPE = 'PNG' ]; then
+		EXT="png"
+	else
+		EXT="jpg"
+	fi
+	WIDTH=$(echo $TYPE | awk -F 'x' '{ print $1 }')
+	HEIGHT=$(echo $TYPE | awk -F 'x' '{ print $2 }')
+	# Fixation des hauteurs
+	if [ $HEIGHT_CANVAS -eq 0 ]; then HEIGHT_CANVAS=$(($HEIGHT/2)); fi
+	if [ $HEIGHT_IMAGE -eq 0 ]; then HEIGHT_IMAGE=$(($HEIGHT/2)); fi
+	# Fixation des largeurs
+	LISTE_FACTEURS=$($FACTORIZER $WIDTH | awk -F ': ' '{print $2}')
+	WIDTH=$(det_width $LISTE_FACTEURS)
+	if [ $WIDTH_IMAGE -eq 0 ]; then WIDTH_IMAGE=$(($WIDTH / 2)); fi
+	if [ $WIDTH_CANVAS -eq 0 ]; then WIDTH_CANVAS=$WIDTH_IMAGE; fi
+	# Decoupage
+	if [ $VERBOSE = true ]; then echo -n "[*] Découpage de l'image originale en sous images de dimensions: ${WIDTH}x${HEIGHT}:"; fi
+	$CROPPER $FIC -crop ${WIDTH}x${HEIGHT} +repage $MAP_FILES%02d.$EXT
+	if [ $VERBOSE = true ]; then echo " [OK]"; fi
+	# Optimisation
+	if [ $FLAG_OPTIM = true ]; then
+		if [ $VERBOSE = true ]; then echo "[*] Optimisation des images (très long):"; fi
+		ID_IMG=1;
+		for FIC in $(ls ${MAP_FILES}*.${EXT}); do
+			if [ $VERBOSE = true ]; then echo -ne "\t[*] Image $ID_IMG:"; fi
+			$OPTIMIZER -o7 -zm1-9 $FIC > /dev/null 2>&1 && $ID_GENERATOR $FIC >> $MANIFEST
+			if [ $VERBOSE = true ]; then echo " [OK]"; fi
+			ID_IMG=$(($ID_IMG + 1));
+		done
+	fi
+	# Encodage base64
+	if [ $VERBOSE = true ]; then echo "[*] Construction des balises images:"; fi
+	ID_IMG=1;
+	for FIC in $(ls ${MAP_FILES}*.${EXT}); do
+		if [ $VERBOSE = true ]; then echo -ne "\t[*] Image $ID_IMG:"; fi
+		make_template_image $FIC >> $TEMPLATE_IMAGE
+		if [ $VERBOSE = true ]; then echo " [OK]"; fi
+		ID_IMG=$(($ID_IMG + 1));
+	done
+}
+#}}}
+function svg_builder() {	#{{{
+	if [ $VERBOSE = true ]; then echo -n "[*] Creation du panoptisson:"; fi
+	echo "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">" > $OUTPUT_FILE
+	echo "<svg width=\"$WIDTH_CANVAS\" height=\"$HEIGHT_CANVAS\" id=\"$ID\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">" >> $OUTPUT_FILE
+	cat $TEMPLATE_IMAGE >> $OUTPUT_FILE
+	#{{{ Ajout du code des controles
+	echo "
+	<script type=\"text/javascript\">
+	<![CDATA[
+	// Déclaration des commandes
+	// Pour aller plus vite: <PageUp>, ralentir: <PageDown>, déplacements: <touches de direction>, entrée mode automatique: <home>, sortie mode auto: <end>, zoomer: <F1>, dézoomer: <F2>  
+	var KEY = $COMMANDES;
+	var DECALLAGE = 2;
+	var ZOOM_PAS = 0.1;
+	var VITESSE = 2;
+	var MODE_AUTO = false;		// Définit si l'on est dans le défilement automatique
+	var tmp = document.getElementsByTagName(\"image\");
+	var ID = tmp[0].parentNode.id;
+	var listeImages = [];
+	var n = tmp.length;
+	for (var i=0; i<n; i++)	listeImages.push(tmp[i]);
+	// Détermination de la taille des images
+	var IMAGE_WIDTH = listeImages[0].width.animVal.value;
+	var IMAGE_HEIGHT = listeImages[0].height.animVal.value;
+	var courant = Math.floor(n / 2);
+	// Positionnement initial des images
+	for (var index = 0; index < n; index ++) {
+		listeImages[index].setAttribute('x', IMAGE_WIDTH * (index - courant));
+		listeImages[index].setAttribute('y', 0);
+	}
+	// Détermination de la taille de la fenetre de visualisation
+	if (parent.document.getElementById(ID) && !isNaN(parseInt(parent.document.getElementById(ID).width))) {
+		var SUBSTRAT_WIDTH = parseInt(parent.document.getElementById(ID).width);
+		var SUBSTRAT_HEIGHT = parseInt(parent.document.getElementById(ID).height);
+	} else {
+		var SUBSTRAT_WIDTH = parent.document.getElementById(ID).width.animVal.value;
+		var SUBSTRAT_HEIGHT = parent.document.getElementById(ID).height.animVal.value;
+	};
+	// Commandes
+	document.addEventListener('keydown',function(evt) {
+		switch (evt.keyCode) {
+			case KEY.up:
+				if (!MODE_AUTO) {
+					if (parseInt(listeImages[0].getAttribute('y') + VITESSE) < 0) {
+						for (var index = 0; index < n; index ++) {
+							var posY = parseInt(listeImages[index].getAttribute('y'));
+							listeImages[index].setAttribute('y', posY += VITESSE);
+						};
+					};
+				};
+				break;
+			case KEY.down:
+				if (!MODE_AUTO) {
+					if (parseInt(listeImages[0].getAttribute('y')) + IMAGE_HEIGHT > SUBSTRAT_HEIGHT + VITESSE) {
+						for (var index = 0; index < n; index ++) {
+							var posY = parseInt(listeImages[index].getAttribute('y'));
+							listeImages[index].setAttribute('y', posY -= VITESSE);
+						};
+					};
+				};
+				break;
+			case KEY.left:
+				if (!MODE_AUTO) {
+					if (parseInt(listeImages[n - 1].getAttribute('x')) < SUBSTRAT_WIDTH) {
+						listeImages.push(listeImages.shift());
+						listeImages[n - 1].setAttribute('x', parseInt(listeImages[n - 2].getAttribute('x')) + IMAGE_WIDTH);
+					};
+					for (var index = 0; index < n; index ++) {
+						var posX = parseInt(listeImages[index].getAttribute('x'));
+						listeImages[index].setAttribute('x', posX -= VITESSE);
+					};
+				};
+				break;
+			case KEY.right:
+				if (!MODE_AUTO) {
+					if (parseInt(listeImages[0].getAttribute('x')) > 0) {
+						listeImages.unshift(listeImages.pop());
+						listeImages[0].setAttribute('x', parseInt(listeImages[1].getAttribute('x')) - IMAGE_WIDTH);
+					};
+					for (var index = 0; index < n; index ++) {
+						var posX = parseInt(listeImages[index].getAttribute('x'));
+						listeImages[index].setAttribute('x', posX += VITESSE);
+					};
+				};
+				break;
+			case KEY.auto_on:
+				if (!MODE_AUTO) {
+					MODE_AUTO = true;
+					auto = setInterval(function() {
+						if (parseInt(listeImages[0].getAttribute('x')) > 0) {
+							listeImages.unshift(listeImages.pop());
+							listeImages[0].setAttribute('x', parseInt(listeImages[1].getAttribute('x')) - IMAGE_WIDTH);
+						};
+						for (var index = 0; index < n; index ++) {
+							var posX = parseInt(listeImages[index].getAttribute('x'));
+							listeImages[index].setAttribute('x', posX += VITESSE);
+						};
+					}, VITESSE);
+				};
+				break;
+			case KEY.zoom_in:
+				IMAGE_WIDTH *= (1 + ZOOM_PAS);
+				IMAGE_HEIGHT *= (1 + ZOOM_PAS);
+				for (var index = 0; index < n; index++) { 
+					listeImages[index].setAttribute('width', IMAGE_WIDTH);
+					listeImages[index].setAttribute('height', IMAGE_HEIGHT);
+					listeImages[index].setAttribute('x', parseInt(listeImages[index].getAttribute('x')) * (1 + ZOOM_PAS));
+				};
+				break;
+			case KEY.zoom_out:
+				if (IMAGE_WIDTH - ZOOM_PAS > 0 && IMAGE_HEIGHT - ZOOM_PAS > 0) {
+					IMAGE_WIDTH /= (1 + ZOOM_PAS);
+					IMAGE_HEIGHT /= (1 + ZOOM_PAS);
+					for (var index = 0; index < n; index++) { 
+						listeImages[index].setAttribute('width', IMAGE_WIDTH);
+						listeImages[index].setAttribute('height', IMAGE_HEIGHT);
+						listeImages[index].setAttribute('x', parseInt(listeImages[index].getAttribute('x')) / (1 + ZOOM_PAS));
+					};
+				};
+				break;
+			case KEY.auto_off:
+				if (MODE_AUTO) {
+					MODE_AUTO = false;
+					clearInterval(auto);
+				};
+				break;
+			case KEY.faster:
+				VITESSE += DECALLAGE;
+				break;
+			case KEY.slower:
+				if (VITESSE > 10) {
+					VITESSE -= DECALLAGE;
+				} else {
+					VITESSE = DECALLAGE;
+				};
+				break;
+		}
+	},true);
+	]]>
+	</script>
+</svg>" >> $OUTPUT_FILE
+	#}}}
+	if [ $VERBOSE = true ]; then echo " [OK]"; fi
+	if [ $KEEP = false ]; then
+		if [ $VERBOSE = true ]; then echo -n "[*] Effacement des fichiers de travail:"; fi
+		cd .. && if [ -d $WORK_DIR ]; then rm -Rf $WORK_DIR; fi
+		if [ $VERBOSE = true ]; then echo " [OK]"; fi
+	fi
+}
+#}}}
+#}}}
+#{{{ Arguments parsing
+while getopts "c:o:b:f:h:i:g:w:x:y:z:-:" option; do
+	case $option in
+		c ) CROPPER="$OPTARG" ;;
+		o ) OPTIMIZER="$OPTARG" ;;
+		b ) CONVERTER="$OPTARG" ;;
+		f ) FACTORIZER="$OPTARG" ;;
+		h ) ID="$OPTARG" ;;
+		i ) INFO="$OPTARG" ;;
+		g ) ID_GENERATOR="$OPTARG" ;;
+		w ) WIDTH_IMAGE="$OPTARG" ;;
+		x ) HEIGHT_IMAGE="$OPTARG" ;;
+		y ) WIDTH_CANVAS="$OPTARG" ;;
+		z ) HEIGHT_CANVAS="$OPTARG" ;;
+		- ) case "$OPTARG" in
+			'quiet' ) VERBOSE=false ;;
+			'help' ) help && exit 0 ;;
+			'keep-working-files' ) KEEP=true ;;
+			'use-working-files' ) USE_OLD=true ;;
+			'optimise-images' ) FLAG_OPTIM=true ;;
+			'version' ) version && exit 0 ;;
+			* ) echo -e "Mauvaise option: --$OPTARG"
+			    help &&	exit 1 ;;
+			esac;;
+		? ) help && exit 1 ;;
+	esac;
+done;
+#}}}
+#{{{ Main
+time (
+test_image $@
+check_tools
+check_type $FICHIER
+setup_env
+if [ $USE_OLD = false ]; then prepare_images $FICHIER; fi
+svg_builder)
+#}}}
