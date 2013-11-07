@@ -14,7 +14,7 @@ VERSION="0.1"
 WORK_DIR=./work
 MANIFEST=Manifest
 TEMPLATE_IMAGE=images.tpl
-OUTPUT_FILE=../pano.svg
+OUTPUT_FILE=pano.svg
 MAP_FILES=carte_
 CROPPER=convert
 INFO=identify
@@ -61,13 +61,14 @@ function help() {	#{{{
 Liste des options:
 	Fixation des chemins pour les utilitaires:
 		-c )  	$CROPPER (Découpeur d'images générant les fichiers images utilisées)
-		-o )  	$OPTIMIZER (Optimiseur d'images aidant à les rendre plus légères)
+		-j )  	$OPTIMIZER (Optimiseur d'images aidant à les rendre plus légères)
 		-b )  	$CONVERTER (Permet d'encoder les images en base64)
 		-f )  	$FACTORIZER (Programme permettant de décomposer des nombres en produit de facteurs premiers)
 		-i )  	$INFO (Détermination du type de fichier fournit)
 		-g )  	$ID_GENERATOR (Générateur de signatures)
-	Fixation des différentes valeurs (tailles et identifiants):
+	Fixation des différentes valeurs (tailles et identifiants, noms, ...):
 		-h )  	id de l'image. Ceci permet d'intégrer l'image SVG directement dans un document HTML. S'il n'est pas fixé, la valeur par défaut est le hash md5 du fichier original
+		-o ) 	nom du fichier de sortie (Valeur par défaut: $OUTPUT_FILE)
 		-w ) 	largeur de l'affichage des images decoupées (Valeur par défaut: La largeur d'une sous image /2)
 		-x ) 	hauteur de l'affichage des images decoupées (Valeur par défaut: La hauteur de votre image / 2)
 		-y ) 	largeur du panoptisson (Valeur par défaut: identique a la largeur d'une sous-image)
@@ -230,9 +231,10 @@ function prepare_images() {	#{{{
 #}}}
 function svg_builder() {	#{{{
 	if [ $VERBOSE = true ]; then echo -n "[*] Creation du panoptisson:"; fi
+	cd .. 
 	echo "<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">" > $OUTPUT_FILE
 	echo "<svg width=\"$WIDTH_CANVAS\" height=\"$HEIGHT_CANVAS\" id=\"$ID\" version=\"1.1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\">" >> $OUTPUT_FILE
-	cat $TEMPLATE_IMAGE >> $OUTPUT_FILE
+	cat ${WORK_DIR}/$TEMPLATE_IMAGE >> $OUTPUT_FILE
 	#{{{ Ajout du code des controles
 	echo "
 	<script type=\"text/javascript\">
@@ -252,13 +254,13 @@ function svg_builder() {	#{{{
 	// Détermination de la taille des images
 	var IMAGE_WIDTH = listeImages[0].width.animVal.value;
 	var IMAGE_HEIGHT = listeImages[0].height.animVal.value;
-	var courant = Math.floor(n / 2);
+	var courant = Math.floor(n / 2);		//Ici, on définit la position initiale sur l'image la plus proche du milieu
 	// Positionnement initial des images
 	for (var index = 0; index < n; index ++) {
 		listeImages[index].setAttribute('x', IMAGE_WIDTH * (index - courant));
 		listeImages[index].setAttribute('y', 0);
 	}
-	// Détermination de la taille de la fenetre de visualisation
+	// Détermination de la taille de la fenêtre de visualisation
 	if (parent.document.getElementById(ID) && !isNaN(parseInt(parent.document.getElementById(ID).width))) {
 		var SUBSTRAT_WIDTH = parseInt(parent.document.getElementById(ID).width);
 		var SUBSTRAT_HEIGHT = parseInt(parent.document.getElementById(ID).height);
@@ -358,7 +360,7 @@ function svg_builder() {	#{{{
 				VITESSE += DECALLAGE;
 				break;
 			case KEY.slower:
-				if (VITESSE > 10) {
+				if (VITESSE > 2) {
 					VITESSE -= DECALLAGE;
 				} else {
 					VITESSE = DECALLAGE;
@@ -373,21 +375,22 @@ function svg_builder() {	#{{{
 	if [ $VERBOSE = true ]; then echo " [OK]"; fi
 	if [ $KEEP = false ]; then
 		if [ $VERBOSE = true ]; then echo -n "[*] Effacement des fichiers de travail:"; fi
-		cd .. && if [ -d $WORK_DIR ]; then rm -Rf $WORK_DIR; fi
+		if [ -d $WORK_DIR ]; then rm -Rf $WORK_DIR; fi
 		if [ $VERBOSE = true ]; then echo " [OK]"; fi
 	fi
 }
 #}}}
 #}}}
 #{{{ Arguments parsing
-while getopts "c:o:b:f:h:i:g:w:x:y:z:-:" option; do
+while getopts "c:o:b:f:h:i:j:g:w:x:y:z:-:" option; do
 	case $option in
 		c ) CROPPER="$OPTARG" ;;
-		o ) OPTIMIZER="$OPTARG" ;;
+		j ) OPTIMIZER="$OPTARG" ;;
 		b ) CONVERTER="$OPTARG" ;;
 		f ) FACTORIZER="$OPTARG" ;;
 		h ) ID="$OPTARG" ;;
 		i ) INFO="$OPTARG" ;;
+		o ) OUTPUT_FILE="$OPTARG" ;;
 		g ) ID_GENERATOR="$OPTARG" ;;
 		w ) WIDTH_IMAGE="$OPTARG" ;;
 		x ) HEIGHT_IMAGE="$OPTARG" ;;
