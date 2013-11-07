@@ -416,6 +416,6 @@ test_image $@
 check_tools
 check_type $FICHIER
 setup_env
-if [ $USE_OLD = false ]; then prepare_images $FICHIER; fi
+if [ $USE_OLD = false ]; then prepare_images ${WORK_DIR}/$FICHIER; fi
 svg_builder)
 #}}}
