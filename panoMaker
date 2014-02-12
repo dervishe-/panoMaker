@@ -2,13 +2,25 @@
 #
 #	vim: 		foldmarker{{{,}}} 
 #	Author:		Alex Keledjian <dervishe@yahoo.fr>
-#	License:	GPLv3
-#	(C):		AFPD
 #	Version:	0.2
-#	Todo:		- Remplacer les "eval" par une solution plus stable mais concise
+#	Todo:
+#				- Remplacer les "eval" par une solution plus stable mais concise
 #				- Améliorer le parsing des arguments (notamment les options longues avec arguments)
 #				- Vérification de la pré-existence de fichiers de travail afin de ne pas les refaire
 #				- Équilibrer le découpage de l'image de façon à ce que les images filles soient de bonne taille
+#
+#	Copyright (C) <2013>  <Alexandre Keledjian dervishe@yahoo.fr>
+#	This program is free software: you can redistribute it and/or modify
+#	it under the terms of the GNU General Public License as published by
+#	the Free Software Foundation, either version 3 of the License, or
+#	any later version.
+#
+#	This program is distributed in the hope that it will be useful,
+#	but WITHOUT ANY WARRANTY; without even the implied warranty of
+#	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#	GNU General Public License for more details.
+#	You should have received a copy of the GNU General Public License
+#	along with this program.  If not, see <http://www.gnu.org/licenses/>
 #
 #{{{Variables
 VERSION="0.2"
@@ -28,6 +40,8 @@ HEIGHT_CANVAS=0
 WIDTH_IMAGE=0
 HEIGHT_IMAGE=0
 VERBOSE=true
+EMBED_IMAGES=true
+LOC_IMAGES=./
 FLAG_OPTIM=false
 KEEP=false
 USE_OLD=false
@@ -74,6 +88,7 @@ Liste des options:
 		-x ) 	hauteur de l'affichage des images decoupées (Valeur par défaut: La hauteur de votre image / 2)
 		-y ) 	largeur du panoptisson (Valeur par défaut: identique a la largeur d'une sous-image)
 		-z ) 	hauteur du panoptisson (Valeur par défaut: identique a la largeur d'une sous-image)
+		-e )	n'inclue pasles images directementdans le panoptisson mais les lies vie le répertoire mentionné
 	Options longues:
 		--quiet )		Mode silencieux, n'affiche aucune information, quand le programme s'arrête il vous rend la main	
 		--help )		Affiche cette aide
@@ -95,6 +110,11 @@ $0 -h id_image mon_fichier_pano.jpg
 Puis d'utiliser le code de balise suivant:
 <embed src=\"pano.svg\" type=\"image/svg+xml\" width=\"800\" height=\"600\" id=\"id_image\" />
 Bien évidemment ceci est compatible avec les autres options. Quand aux valeurs de width et de height, vous pouvez fixer ce que vous voulez
+
+Si l'on ne veut pas que les différentes images soient directement inclues dans le panoptisson, il faut utiliser l'option -e avec un répertoire en paramètre:
+$0 -e /home/pilpoil/ mon_fichier_pano.jpg
+Ceci génèrera directement les images dans le répertoire /home/pilpoil.
+Attention, quand vous utiliserez le panoptisson, celui-ci sera irrémédiablement lié à la localisation des images...
 
 Les commandes du panoptisson généré:
 	<F1>				Zoomer
@@ -157,16 +177,11 @@ function det_width() { #{{{
 	if [ $# -gt 2 ]; then # Cas où l'on a plus de 3 facteurs premiers
 		RESULTAT=1;
 		for FACT in $*; do
-			if [ $FACT -ge 10 ]; then
-				echo $(($WIDTH / $FACT))
+			RESULTAT=$(($RESULTAT * $FACT))
+			if [ $RESULTAT -ge 3 ]; then
+				echo $(($WIDTH / $RESULTAT))
 				return 0
-			else
-				RESULTAT=$(($RESULTAT * $FACT))
-				if [ $RESULTAT -ge 3 ]; then
-					echo $(($WIDTH / $RESULTAT))
-					return 0
-				fi
-			fi	
+			fi
 		done
 	else
 		if [ $# -eq 1  -o $1 -lt 3 ]; then # La dimension est un nombre premier ou le premier facteur premier est plus petit que 3: On cherche le multiple de 3 le plus proche
@@ -180,13 +195,17 @@ function det_width() { #{{{
 				echo $(( ($WIDTH - 2) / 3 ))
 			fi
 		else
-			echo $1
+			echo $(($WIDTH / $1 ))
 		fi
 	fi
 }
 #}}}
 function make_template_image() {	#{{{
-	echo "<image width=\"$WIDTH_IMAGE\" height=\"$HEIGHT_IMAGE\" id=\"$1\" xlink:href=\"data:image/${EXT};base64,$($CONVERTER enc -base64 -in $1)\" />"
+	if [ $EMBED_IMAGES = true ]; then
+		echo "<image width=\"$WIDTH_IMAGE\" height=\"$HEIGHT_IMAGE\" id=\"$1\" xlink:href=\"data:image/${EXT};base64,$($CONVERTER enc -base64 -in $1)\" />"
+	else
+		echo "<image width=\"$WIDTH_IMAGE\" height=\"$HEIGHT_IMAGE\" id=\"$1\" xlink:href=\"$LOC_IMAGES$1\" />"
+	fi
 }
 #}}}
 function prepare_images() {	#{{{
@@ -380,6 +399,7 @@ function svg_builder() {	#{{{
 	if [ $VERBOSE = true ]; then echo " [OK]"; fi
 	if [ $KEEP = false ]; then
 		if [ $VERBOSE = true ]; then echo -n "[*] Effacement des fichiers de travail:"; fi
+		if [ $EMBED_IMAGES = false ]; then mv $WORK_DIR/carte_* $LOC_IMAGES; fi
 		if [ -d $WORK_DIR ]; then rm -Rf $WORK_DIR; fi
 		if [ $VERBOSE = true ]; then echo " [OK]"; fi
 	fi
@@ -387,7 +407,7 @@ function svg_builder() {	#{{{
 #}}}
 #}}}
 #{{{ Arguments parsing
-while getopts "c:o:b:f:h:i:j:g:w:x:y:z:-:" option; do
+while getopts "c:o:b:f:h:i:j:g:w:x:y:z:e:-:" option; do
 	case $option in
 		c ) CROPPER="$OPTARG" ;;
 		j ) OPTIMIZER="$OPTARG" ;;
@@ -401,6 +421,8 @@ while getopts "c:o:b:f:h:i:j:g:w:x:y:z:-:" option; do
 		x ) HEIGHT_IMAGE="$OPTARG" ;;
 		y ) WIDTH_CANVAS="$OPTARG" ;;
 		z ) HEIGHT_CANVAS="$OPTARG" ;;
+		e ) EMBED_IMAGES=false
+			LOC_IMAGES="$OPTARG";;
 		- ) case "$OPTARG" in
 			'quiet' ) VERBOSE=false ;;
 			'help' ) help && exit 0 ;;
